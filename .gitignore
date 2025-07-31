@@ -93,7 +93,9 @@ ehthumbs.db
 Thumbs.db
 
 # Wallet files (security)
-*.json
 *.key
 wallet.*
+wallet.json
 keystore/
+**/wallets/**
+**/keys/**
