@@ -12,6 +12,7 @@ import {
   encodeAddress,
 } from "@polkadot/util-crypto";
 import { Keyring } from "@polkadot/keyring";
+import { ApiPromise, WsProvider } from "@polkadot/api";
 import fs from "fs";
 import path from "path";
 
@@ -89,14 +90,17 @@ class FaucetFarmer {
     await cryptoWaitReady();
 
     console.log(`🔌 Connecting to ${CONFIG.NETWORK_NAME} Relay Chain...`);
-    this.relayClient = createClient(getWsProvider(CONFIG.RELAY_RPC));
 
     if (CONFIG.CHAIN_DESCRIPTOR) {
+      // Use polkadot-api for networks with descriptors (Westend)
+      this.relayClient = createClient(getWsProvider(CONFIG.RELAY_RPC));
       this.relayApi = this.relayClient.getTypedApi(wnd);
+      this.usePolkadotJs = false;
     } else {
-      // For networks without typed descriptors, use dynamic API
-      const { query, tx, constants } = this.relayClient;
-      this.relayApi = { query, tx, constants };
+      // Use @polkadot/api for networks without descriptors (Paseo)
+      const provider = new WsProvider(CONFIG.RELAY_RPC);
+      this.relayApi = await ApiPromise.create({ provider });
+      this.usePolkadotJs = true;
     }
 
     console.log(`✅ Connected to ${CONFIG.NETWORK_NAME} Relay Chain`);
@@ -160,12 +164,22 @@ class FaucetFarmer {
 
   async checkBalance(address) {
     try {
-      const account = await this.relayApi.query.System.Account.getValue(
-        address
-      );
-      return account.data.free.toString();
+      if (this.usePolkadotJs) {
+        // @polkadot/api approach
+        const { data: balance } = await this.relayApi.query.system.account(
+          address
+        );
+        return balance.free.toString();
+      } else {
+        // polkadot-api approach
+        const account = await this.relayApi.query.System.Account.getValue(
+          address
+        );
+        return account.data.free.toString();
+      }
     } catch (error) {
       console.log(`   ⚠️  Could not fetch balance for ${address}`);
+      console.log(`   Error: ${error.message}`);
       return "0";
     }
   }
@@ -273,7 +287,7 @@ class FaucetFarmer {
       const balance = await this.checkBalance(fromAddress);
       const balanceBigInt = BigInt(balance);
       const transferAmount = BigInt(
-        Math.floor(CONFIG.TRANSFER_AMOUNT * Math.pow(10, 12))
+        Math.floor(CONFIG.TRANSFER_AMOUNT * Math.pow(10, CONFIG.TOKEN_DECIMALS))
       );
 
       if (balanceBigInt < transferAmount) {
@@ -289,39 +303,68 @@ class FaucetFarmer {
         `   💸 Transferring ${CONFIG.TRANSFER_AMOUNT} ${CONFIG.TOKEN_SYMBOL} from Account ${accountId}...`
       );
 
-      const tx = this.relayApi.tx.Balances.transfer_keep_alive({
-        dest: {
-          type: "Id",
-          value: CONFIG.TARGET_ADDRESS,
-        },
-        value: transferAmount,
-      });
-
-      await new Promise((resolve, reject) => {
-        tx.signSubmitAndWatch(signer).subscribe({
-          next: (event) => {
-            if (event.type === "finalized") {
-              if (event.ok) {
-                console.log(
-                  `      ✅ Transfer successful from Account ${accountId}`
-                );
-                resolve(true);
-              } else {
-                console.log(
-                  `      ❌ Transfer failed from Account ${accountId}`
-                );
-                reject(new Error("Transfer failed"));
-              }
-            }
+      let tx;
+      if (this.usePolkadotJs) {
+        // @polkadot/api approach
+        tx = this.relayApi.tx.balances.transferKeepAlive(
+          CONFIG.TARGET_ADDRESS,
+          transferAmount
+        );
+      } else {
+        // polkadot-api approach
+        tx = this.relayApi.tx.Balances.transfer_keep_alive({
+          dest: {
+            type: "Id",
+            value: CONFIG.TARGET_ADDRESS,
           },
-          error: (error) => {
-            console.log(
-              `      ❌ Transfer error from Account ${accountId}: ${error.message}`
-            );
-            reject(error);
-          },
+          value: transferAmount,
         });
-      });
+      }
+
+      if (this.usePolkadotJs) {
+        // @polkadot/api approach - use signAndSend with keyringAccount
+        await new Promise((resolve, reject) => {
+          tx.signAndSend(keyringAccount, (result) => {
+            if (result.status.isFinalized) {
+              console.log(
+                `      ✅ Transfer successful from Account ${accountId}`
+              );
+              resolve(true);
+            }
+            if (result.status.isInvalid || result.status.isDropped) {
+              console.log(`      ❌ Transfer failed from Account ${accountId}`);
+              reject(new Error("Transfer failed"));
+            }
+          }).catch(reject);
+        });
+      } else {
+        // polkadot-api approach
+        await new Promise((resolve, reject) => {
+          tx.signSubmitAndWatch(signer).subscribe({
+            next: (event) => {
+              if (event.type === "finalized") {
+                if (event.ok) {
+                  console.log(
+                    `      ✅ Transfer successful from Account ${accountId}`
+                  );
+                  resolve(true);
+                } else {
+                  console.log(
+                    `      ❌ Transfer failed from Account ${accountId}`
+                  );
+                  reject(new Error("Transfer failed"));
+                }
+              }
+            },
+            error: (error) => {
+              console.log(
+                `      ❌ Transfer error from Account ${accountId}: ${error.message}`
+              );
+              reject(error);
+            },
+          });
+        });
+      }
 
       return true;
     } catch (error) {
@@ -362,7 +405,7 @@ class FaucetFarmer {
       if (success) {
         successCount++;
         totalTransferred += BigInt(
-          Math.floor(CONFIG.TRANSFER_AMOUNT * Math.pow(10, 12))
+          Math.floor(CONFIG.TRANSFER_AMOUNT * Math.pow(10, CONFIG.TOKEN_DECIMALS))
         );
       } else {
         failCount++;
@@ -425,7 +468,11 @@ class FaucetFarmer {
   }
 
   async disconnect() {
-    if (this.relayClient) this.relayClient.destroy();
+    if (this.usePolkadotJs) {
+      if (this.relayApi) await this.relayApi.disconnect();
+    } else {
+      if (this.relayClient) this.relayClient.destroy();
+    }
     console.log(`🔌 Disconnected from ${CONFIG.NETWORK_NAME} Relay Chain`);
   }
 }
