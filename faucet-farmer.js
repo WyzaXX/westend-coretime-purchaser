@@ -23,7 +23,7 @@ import path from "path";
 // ║  • "WESTEND" - 10 WND per request, transfer 9.9 WND              ║
 // ║  • "PASEO"   - 5000 PAS per request, transfer 4990 PAS           ║
 // ╚══════════════════════════════════════════════════════════════════╝
-const SELECTED_NETWORK = "PASEO";
+const SELECTED_NETWORK = "WESTEND";
 
 // ========================================
 // NETWORK CONFIGURATIONS
@@ -76,6 +76,9 @@ const CONFIG = {
   ACCOUNTS_FILE: `faucet-accounts-${NETWORK.NAME.toLowerCase()}.json`,
   ADDRESSES_FILE: `faucet-addresses-${NETWORK.NAME.toLowerCase()}.txt`,
   DELAY_BETWEEN_TRANSFERS: 3000,
+  // Performance settings
+  BALANCE_CHECK_BATCH_SIZE: 10, // Check 10 accounts at once
+  TRANSFER_BATCH_SIZE: 5, // Send 5 transfers at once
 };
 
 class FaucetFarmer {
@@ -234,19 +237,48 @@ class FaucetFarmer {
   }
 
   async checkAllBalances() {
-    console.log(`\n💰 Checking balances for all accounts...`);
+    console.log(`\n💰 Checking balances for all accounts in parallel...`);
+    console.log(
+      `   Batch size: ${CONFIG.BALANCE_CHECK_BATCH_SIZE} accounts at once`
+    );
 
     let totalBalance = BigInt(0);
     let accountsWithFunds = 0;
 
-    for (const account of this.accounts) {
-      const balance = await this.checkBalance(account.address);
-      account.balance = balance;
-      totalBalance += BigInt(balance);
+    // Process accounts in batches for parallel checking
+    for (
+      let i = 0;
+      i < this.accounts.length;
+      i += CONFIG.BALANCE_CHECK_BATCH_SIZE
+    ) {
+      const batch = this.accounts.slice(i, i + CONFIG.BALANCE_CHECK_BATCH_SIZE);
 
-      if (BigInt(balance) > BigInt(0)) {
-        accountsWithFunds++;
+      // Check all accounts in this batch in parallel
+      const balancePromises = batch.map((account) =>
+        this.checkBalance(account.address)
+          .then((balance) => ({ account, balance }))
+          .catch((error) => ({ account, balance: "0", error }))
+      );
+
+      const results = await Promise.all(balancePromises);
+
+      // Update accounts with their balances
+      for (const { account, balance } of results) {
+        account.balance = balance;
+        totalBalance += BigInt(balance);
+
+        if (BigInt(balance) > BigInt(0)) {
+          accountsWithFunds++;
+        }
       }
+
+      const processed = Math.min(
+        i + CONFIG.BALANCE_CHECK_BATCH_SIZE,
+        this.accounts.length
+      );
+      console.log(
+        `   Checked ${processed}/${this.accounts.length} accounts...`
+      );
     }
 
     this.saveAccounts();
@@ -379,40 +411,72 @@ class FaucetFarmer {
     console.log(`\n💸 Transferring funds from all accounts to target...`);
     console.log(`   Target: ${CONFIG.TARGET_ADDRESS}`);
     console.log(
-      `   This will take approximately ${Math.ceil(
-        (CONFIG.NUM_ACCOUNTS * CONFIG.DELAY_BETWEEN_TRANSFERS) / 1000 / 60
-      )} minutes\n`
+      `   Batch size: ${CONFIG.TRANSFER_BATCH_SIZE} transfers at once`
+    );
+
+    // Filter accounts with balance
+    const accountsWithBalance = this.accounts.filter(
+      (account) => BigInt(account.balance) > BigInt(0)
+    );
+
+    console.log(
+      `   Accounts to transfer: ${accountsWithBalance.length}/${this.accounts.length}\n`
     );
 
     let successCount = 0;
     let failCount = 0;
     let totalTransferred = BigInt(0);
 
-    for (let i = 0; i < this.accounts.length; i++) {
-      const account = this.accounts[i];
-
-      if (BigInt(account.balance) === BigInt(0)) {
-        console.log(`   ⏭️  Skipping Account ${account.id} (no balance)`);
-        continue;
-      }
-
-      const success = await this.transferToTarget(
-        account.mnemonic,
-        account.address,
-        account.id
+    // Process transfers in batches for parallel execution
+    for (
+      let i = 0;
+      i < accountsWithBalance.length;
+      i += CONFIG.TRANSFER_BATCH_SIZE
+    ) {
+      const batch = accountsWithBalance.slice(
+        i,
+        i + CONFIG.TRANSFER_BATCH_SIZE
       );
 
-      if (success) {
-        successCount++;
-        totalTransferred += BigInt(
-          Math.floor(CONFIG.TRANSFER_AMOUNT * Math.pow(10, CONFIG.TOKEN_DECIMALS))
-        );
-      } else {
-        failCount++;
+      console.log(
+        `   Processing batch ${
+          Math.floor(i / CONFIG.TRANSFER_BATCH_SIZE) + 1
+        }/${Math.ceil(
+          accountsWithBalance.length / CONFIG.TRANSFER_BATCH_SIZE
+        )}...`
+      );
+
+      // Execute all transfers in this batch in parallel
+      const transferPromises = batch.map((account) =>
+        this.transferToTarget(account.mnemonic, account.address, account.id)
+          .then((success) => ({ account, success }))
+          .catch((error) => {
+            console.log(
+              `      ❌ Transfer error from Account ${account.id}: ${error.message}`
+            );
+            return { account, success: false };
+          })
+      );
+
+      const results = await Promise.all(transferPromises);
+
+      // Aggregate results
+      for (const { success } of results) {
+        if (success) {
+          successCount++;
+          totalTransferred += BigInt(
+            Math.floor(
+              CONFIG.TRANSFER_AMOUNT * Math.pow(10, CONFIG.TOKEN_DECIMALS)
+            )
+          );
+        } else {
+          failCount++;
+        }
       }
 
-      if (i < this.accounts.length - 1) {
-        await this.sleep(CONFIG.DELAY_BETWEEN_TRANSFERS);
+      // Small delay between batches to avoid overwhelming the network
+      if (i + CONFIG.TRANSFER_BATCH_SIZE < accountsWithBalance.length) {
+        await this.sleep(1000);
       }
     }
 
