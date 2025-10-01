@@ -15,14 +15,65 @@ import { Keyring } from "@polkadot/keyring";
 import fs from "fs";
 import path from "path";
 
+// ╔══════════════════════════════════════════════════════════════════╗
+// ║                    NETWORK SELECTION                             ║
+// ║                                                                  ║
+// ║  CHANGE THIS LINE TO SWITCH BETWEEN NETWORKS:                    ║
+// ║  • "WESTEND" - 10 WND per request, transfer 9.9 WND              ║
+// ║  • "PASEO"   - 5000 PAS per request, transfer 4990 PAS           ║
+// ╚══════════════════════════════════════════════════════════════════╝
+const SELECTED_NETWORK = "WESTEND";
+
+// ========================================
+// NETWORK CONFIGURATIONS
+// ========================================
+const NETWORKS = {
+  WESTEND: {
+    NAME: "Westend",
+    RPC: "wss://westend-rpc.polkadot.io",
+    TOKEN: "WND",
+    DECIMALS: 12,
+    SS58_PREFIX: 42,
+    FAUCET_URL: "https://faucet.polkadot.io/westend",
+    FAUCET_AMOUNT: 10,
+    TRANSFER_AMOUNT: 9.9,
+    CHAIN_DESCRIPTOR: "wnd",
+  },
+  PASEO: {
+    NAME: "Paseo",
+    RPC: "wss://paseo-rpc.dwellir.com",
+    TOKEN: "PAS",
+    DECIMALS: 10,
+    SS58_PREFIX: 0,
+    FAUCET_URL: "https://faucet.polkadot.io/paseo",
+    FAUCET_AMOUNT: 5000,
+    TRANSFER_AMOUNT: 4990,
+    CHAIN_DESCRIPTOR: null,
+  },
+};
+
+// ========================================
+// ACTIVE CONFIGURATION
+// ========================================
+const NETWORK = NETWORKS[SELECTED_NETWORK];
+
 const CONFIG = {
-  WESTEND_RELAY_RPC: "wss://westend-rpc.polkadot.io",
-  TARGET_ADDRESS: "5CP6sXkp61pVFkKLwAupxyGvZ8bfAAXYDfhoDkNXDGtNcBfR",
+  NETWORK_NAME: NETWORK.NAME,
+  RELAY_RPC: NETWORK.RPC,
+  TOKEN_SYMBOL: NETWORK.TOKEN,
+  TOKEN_DECIMALS: NETWORK.DECIMALS,
+  SS58_PREFIX: NETWORK.SS58_PREFIX,
+  FAUCET_URL: NETWORK.FAUCET_URL,
+  FAUCET_AMOUNT: NETWORK.FAUCET_AMOUNT,
+  CHAIN_DESCRIPTOR: NETWORK.CHAIN_DESCRIPTOR,
+  TARGET_ADDRESS:
+    SELECTED_NETWORK === "PASEO"
+      ? "1KQ1s1swo5xhHKrtoxq7875QkbJrU5gJASHP3MsmMutnXaw"
+      : "5CP6sXkp61pVFkKLwAupxyGvZ8bfAAXYDfhoDkNXDGtNcBfR",
   NUM_ACCOUNTS: 50,
-  FAUCET_AMOUNT: 10,
-  TRANSFER_AMOUNT: 9.9,
-  FAUCET_URL: "https://faucet.polkadot.io/westend",
-  ACCOUNTS_FILE: "faucet-accounts.json",
+  TRANSFER_AMOUNT: NETWORK.TRANSFER_AMOUNT,
+  ACCOUNTS_FILE: `faucet-accounts-${NETWORK.NAME.toLowerCase()}.json`,
+  ADDRESSES_FILE: `faucet-addresses-${NETWORK.NAME.toLowerCase()}.txt`,
   DELAY_BETWEEN_TRANSFERS: 3000,
 };
 
@@ -34,13 +85,19 @@ class FaucetFarmer {
   }
 
   async initialize() {
-    console.log("🚀 Initializing Westend Faucet Farmer...");
+    console.log(`🚀 Initializing ${CONFIG.NETWORK_NAME} Faucet Farmer...`);
     await cryptoWaitReady();
 
-    console.log("🔌 Connecting to Westend Relay Chain...");
-    this.relayClient = createClient(getWsProvider(CONFIG.WESTEND_RELAY_RPC));
-    this.relayApi = this.relayClient.getTypedApi(wnd);
-    console.log("✅ Connected to Westend Relay Chain");
+    console.log(`🔌 Connecting to ${CONFIG.NETWORK_NAME} Relay Chain...`);
+    this.relayClient = createClient(getWsProvider(CONFIG.RELAY_RPC));
+
+    if (CONFIG.CHAIN_DESCRIPTOR) {
+      this.relayApi = this.relayClient.getTypedApi(wnd);
+    } else {
+      this.relayApi = this.relayClient.getUntypedApi();
+    }
+
+    console.log(`✅ Connected to ${CONFIG.NETWORK_NAME} Relay Chain`);
   }
 
   async loadOrGenerateAccounts() {
@@ -59,7 +116,7 @@ class FaucetFarmer {
         const mnemonic = mnemonicGenerate(12);
         const seed = mnemonicToMiniSecret(mnemonic);
         const keyPair = sr25519PairFromSeed(seed);
-        const address = encodeAddress(keyPair.publicKey, 42);
+        const address = encodeAddress(keyPair.publicKey, CONFIG.SS58_PREFIX);
 
         this.accounts.push({
           id: i + 1,
@@ -88,7 +145,14 @@ class FaucetFarmer {
   saveAccounts() {
     fs.writeFileSync(
       CONFIG.ACCOUNTS_FILE,
-      JSON.stringify({ accounts: this.accounts }, null, 2)
+      JSON.stringify(
+        {
+          network: CONFIG.NETWORK_NAME,
+          accounts: this.accounts,
+        },
+        null,
+        2
+      )
     );
   }
 
@@ -108,14 +172,17 @@ class FaucetFarmer {
     console.log(`\n📋 Exporting addresses for manual faucet requests...`);
 
     const addresses = this.accounts.map((acc) => acc.address);
-    const outputFile = "faucet-addresses.txt";
+    const outputFile = CONFIG.ADDRESSES_FILE;
 
     fs.writeFileSync(outputFile, addresses.join("\n"));
 
     console.log(`\n✅ Exported ${addresses.length} addresses to ${outputFile}`);
     console.log(`\n💡 Faucet Information:`);
+    console.log(`   • Network: ${CONFIG.NETWORK_NAME}`);
     console.log(`   • URL: ${CONFIG.FAUCET_URL}`);
-    console.log(`   • Amount per request: ${CONFIG.FAUCET_AMOUNT} WND`);
+    console.log(
+      `   • Amount per request: ${CONFIG.FAUCET_AMOUNT} ${CONFIG.TOKEN_SYMBOL}`
+    );
     console.log(`   • Rate limit: Once every 24 hours per account`);
     console.log(`   • Requires: Captcha completion`);
     console.log(`\n📝 Instructions:`);
@@ -343,8 +410,7 @@ class FaucetFarmer {
   }
 
   formatBalance(balance) {
-    const WND_DECIMALS = 12;
-    const divisor = Math.pow(10, WND_DECIMALS);
+    const divisor = Math.pow(10, CONFIG.TOKEN_DECIMALS);
     return (parseFloat(balance) / divisor).toFixed(4);
   }
 
@@ -354,7 +420,7 @@ class FaucetFarmer {
 
   async disconnect() {
     if (this.relayClient) this.relayClient.destroy();
-    console.log("🔌 Disconnected from Westend Relay Chain");
+    console.log(`🔌 Disconnected from ${CONFIG.NETWORK_NAME} Relay Chain`);
   }
 }
 
