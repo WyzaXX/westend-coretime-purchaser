@@ -5,13 +5,18 @@
   "type": "module",
   "main": "coretime-purchaser.js",
   "bin": {
-    "coretime-purchaser": "./coretime-purchaser.js"
+    "coretime-purchaser": "./coretime-purchaser.js",
+    "faucet-farmer": "./faucet-farmer.js"
   },
   "scripts": {
     "postinstall": "npx papi add dot -n westend2",
     "start": "node coretime-purchaser.js",
     "purchase": "node coretime-purchaser.js",
     "check-regions": "node coretime-purchaser.js",
+    "farm-workflow": "node faucet-farmer.js workflow",
+    "export-addresses": "node faucet-farmer.js export",
+    "check-balances": "node faucet-farmer.js check",
+    "transfer-all": "node faucet-farmer.js transfer",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
