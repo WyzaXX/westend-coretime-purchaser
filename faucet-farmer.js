@@ -22,7 +22,7 @@ import path from "path";
 // ║  • "WESTEND" - 10 WND per request, transfer 9.9 WND              ║
 // ║  • "PASEO"   - 5000 PAS per request, transfer 4990 PAS           ║
 // ╚══════════════════════════════════════════════════════════════════╝
-const SELECTED_NETWORK = "WESTEND";
+const SELECTED_NETWORK = "PASEO";
 
 // ========================================
 // NETWORK CONFIGURATIONS
@@ -94,7 +94,9 @@ class FaucetFarmer {
     if (CONFIG.CHAIN_DESCRIPTOR) {
       this.relayApi = this.relayClient.getTypedApi(wnd);
     } else {
-      this.relayApi = this.relayClient.getUntypedApi();
+      // For networks without typed descriptors, use dynamic API
+      const { query, tx, constants } = this.relayClient;
+      this.relayApi = { query, tx, constants };
     }
 
     console.log(`✅ Connected to ${CONFIG.NETWORK_NAME} Relay Chain`);
@@ -187,7 +189,7 @@ class FaucetFarmer {
     console.log(`   • Requires: Captcha completion`);
     console.log(`\n📝 Instructions:`);
     console.log(`   1. Go to ${CONFIG.FAUCET_URL}`);
-    console.log(`   2. Select "Westend" network (Relay Chain)`);
+    console.log(`   2. Select "${CONFIG.NETWORK_NAME}" network (Relay Chain)`);
     console.log(`   3. Paste each address from ${outputFile}`);
     console.log(`   4. Complete the captcha and submit`);
     console.log(`   5. Wait for confirmation before next address`);
@@ -240,12 +242,14 @@ class FaucetFarmer {
       `   Accounts with funds: ${accountsWithFunds}/${this.accounts.length}`
     );
     console.log(
-      `   Total balance: ${this.formatBalance(totalBalance.toString())} WND`
+      `   Total balance: ${this.formatBalance(totalBalance.toString())} ${
+        CONFIG.TOKEN_SYMBOL
+      }`
     );
     console.log(
       `   Average per account: ${this.formatBalance(
         (totalBalance / BigInt(this.accounts.length)).toString()
-      )} WND`
+      )} ${CONFIG.TOKEN_SYMBOL}`
     );
 
     return { totalBalance, accountsWithFunds };
@@ -276,13 +280,13 @@ class FaucetFarmer {
         console.log(
           `      ⚠️  Insufficient balance in Account ${accountId} (${this.formatBalance(
             balance
-          )} WND)`
+          )} ${CONFIG.TOKEN_SYMBOL})`
         );
         return false;
       }
 
       console.log(
-        `   💸 Transferring ${CONFIG.TRANSFER_AMOUNT} WND from Account ${accountId}...`
+        `   💸 Transferring ${CONFIG.TRANSFER_AMOUNT} ${CONFIG.TOKEN_SYMBOL} from Account ${accountId}...`
       );
 
       const tx = this.relayApi.tx.Balances.transfer_keep_alive({
@@ -375,12 +379,12 @@ class FaucetFarmer {
     console.log(
       `   💰 Total transferred: ${this.formatBalance(
         totalTransferred.toString()
-      )} WND`
+      )} ${CONFIG.TOKEN_SYMBOL}`
     );
   }
 
   async showWorkflow() {
-    console.log("\n🌾 Westend Faucet Farming Workflow\n");
+    console.log(`\n🌾 ${CONFIG.NETWORK_NAME} Faucet Farming Workflow\n`);
     console.log(
       "⚠️  Note: Official faucet requires captcha (manual process)\n"
     );
@@ -388,23 +392,25 @@ class FaucetFarmer {
     console.log("   Step 1: Export addresses");
     console.log("           → npm run export-addresses\n");
     console.log("   Step 2: Request faucet for each address");
-    console.log("           → Go to https://faucet.polkadot.io/westend");
+    console.log(`           → Go to ${CONFIG.FAUCET_URL}`);
     console.log("           → Complete captcha for each account");
-    console.log("           → You'll receive 100 WND per account\n");
+    console.log(
+      `           → You'll receive ${CONFIG.FAUCET_AMOUNT} ${CONFIG.TOKEN_SYMBOL} per account\n`
+    );
     console.log("   Step 3: Verify funds arrived");
     console.log("           → npm run check-balances\n");
     console.log("   Step 4: Consolidate funds to target");
     console.log("           → npm run transfer-all\n");
     console.log("💰 Expected Results:");
     console.log(
-      `   • Total from faucet: ${
-        CONFIG.NUM_ACCOUNTS * CONFIG.FAUCET_AMOUNT
-      } WND`
+      `   • Total from faucet: ${CONFIG.NUM_ACCOUNTS * CONFIG.FAUCET_AMOUNT} ${
+        CONFIG.TOKEN_SYMBOL
+      }`
     );
     console.log(
       `   • Total transferred: ~${
         CONFIG.NUM_ACCOUNTS * CONFIG.TRANSFER_AMOUNT
-      } WND`
+      } ${CONFIG.TOKEN_SYMBOL}`
     );
     console.log(`   • Target address: ${CONFIG.TARGET_ADDRESS}\n`);
   }
@@ -432,11 +438,11 @@ async function main() {
     !["workflow", "export", "check", "transfer"].includes(command)
   ) {
     console.log(
-      "Westend Faucet Farmer - Manage accounts and consolidate faucet funds"
+      `${CONFIG.NETWORK_NAME} Faucet Farmer - Manage accounts and consolidate faucet funds`
     );
     console.log("");
     console.log(
-      "⚠️  Note: Official Westend faucet requires captcha (manual process)"
+      `⚠️  Note: ${CONFIG.NETWORK_NAME} faucet requires captcha (manual process)`
     );
     console.log("");
     console.log("Usage: node faucet-farmer.js <command>");
@@ -453,8 +459,12 @@ async function main() {
     console.log("");
     console.log("Configuration:");
     console.log(`  Number of accounts: ${CONFIG.NUM_ACCOUNTS}`);
-    console.log(`  Faucet amount: ${CONFIG.FAUCET_AMOUNT} WND per account`);
-    console.log(`  Transfer amount: ${CONFIG.TRANSFER_AMOUNT} WND per account`);
+    console.log(
+      `  Faucet amount: ${CONFIG.FAUCET_AMOUNT} ${CONFIG.TOKEN_SYMBOL} per account`
+    );
+    console.log(
+      `  Transfer amount: ${CONFIG.TRANSFER_AMOUNT} ${CONFIG.TOKEN_SYMBOL} per account`
+    );
     console.log(`  Target address: ${CONFIG.TARGET_ADDRESS}`);
     console.log("");
     process.exit(1);
