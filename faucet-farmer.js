@@ -14,7 +14,6 @@ import {
 import { Keyring } from "@polkadot/keyring";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import fs from "fs";
-import path from "path";
 
 // ╔══════════════════════════════════════════════════════════════════╗
 // ║                    NETWORK SELECTION                             ║
